@@ -292,7 +292,8 @@ namespace ManagedCodeGen
         public static IEnumerable<MethodInfo> ExtractMethodInfo(string[] filePaths)
         {
             Regex namePattern = new Regex(@"for method (.*)$");
-            Regex codeAndPrologSizePattern = new Regex(@"code ([0-9]{1,}), prolog size ([0-9]{1,})");
+            Regex codeSizePattern = new Regex(@"code ([0-9]{1,})");
+            Regex prologSizePattern = new Regex(@"prolog size ([0-9]{1,})");
             // use new regex for perf score so we can still parse older files that did not have it.
             Regex perfScorePattern = new Regex(@"(PerfScore|perf score) (\d+(\.\d+)?)");
             Regex instrCountPattern = new Regex(@"instruction count ([0-9]{1,})");
@@ -302,15 +303,12 @@ namespace ManagedCodeGen
             Regex resolutionInfoPattern = new Regex(@"ResolutionMovs (\d+) ResolutionMovsWt (\d+\.\d+)");
 
             var result =
-             filePaths.SelectMany(filePath => File.ReadLines(filePath))
-                             .Select((x, i) => new { line = x, index = i })
-                             .Where(l => l.line.StartsWith(@"; Total bytes of code", StringComparison.Ordinal)
-                                        || l.line.StartsWith(@"; Assembly listing for method", StringComparison.Ordinal)
-                                        || l.line.StartsWith(@"; Variable debug info:", StringComparison.Ordinal))
+             ReadMetricLines(filePaths)
                              .Select((x) =>
                              {
                                  var nameMatch = namePattern.Match(x.line);
-                                 var codeAndPrologSizeMatch = codeAndPrologSizePattern.Match(x.line);
+                                 var codeSizeMatch = codeSizePattern.Match(x.line);
+                                 var prologSizeMatch = prologSizePattern.Match(x.line);
                                  var perfScoreMatch = perfScorePattern.Match(x.line);
                                  var instrCountMatch = instrCountPattern.Match(x.line);
                                  var allocSizeMatch = allocSizePattern.Match(x.line);
@@ -321,16 +319,17 @@ namespace ManagedCodeGen
                                  {
                                      name = nameMatch.Groups[1].Value,
                                      // Use matched data or default to 0
-                                     totalBytes = codeAndPrologSizeMatch.Success ?
-                                        int.Parse(codeAndPrologSizeMatch.Groups[1].Value, CultureInfo.InvariantCulture) : 0,
-                                     prologBytes = codeAndPrologSizeMatch.Success ?
-                                        int.Parse(codeAndPrologSizeMatch.Groups[2].Value, CultureInfo.InvariantCulture) : 0,
+                                     totalBytes = codeSizeMatch.Success ?
+                                        int.Parse(codeSizeMatch.Groups[1].Value, CultureInfo.InvariantCulture) : 0,
+                                     prologBytes = prologSizeMatch.Success ?
+                                        int.Parse(prologSizeMatch.Groups[1].Value, CultureInfo.InvariantCulture) : 0,
                                      perfScore = perfScoreMatch.Success ?
                                         double.Parse(perfScoreMatch.Groups[2].Value, CultureInfo.InvariantCulture) : 0,
                                      instrCount = instrCountMatch.Success ?
                                         int.Parse(instrCountMatch.Groups[1].Value, CultureInfo.InvariantCulture) : 0,
                                      allocSize = allocSizeMatch.Success ?
                                         int.Parse(allocSizeMatch.Groups[1].Value, CultureInfo.InvariantCulture) : 0,
+                                     hasAllocSize = allocSizeMatch.Success,
                                      debugClauseCount = debugInfoMatch.Success ?
                                         int.Parse(debugInfoMatch.Groups[1].Value, CultureInfo.InvariantCulture) : 0,
                                      debugVarCount = debugInfoMatch.Success ?
@@ -344,7 +343,7 @@ namespace ManagedCodeGen
                                      resolutionWeight = resolutionInfoMatch.Success ?
                                         double.Parse(resolutionInfoMatch.Groups[2].Value, CultureInfo.InvariantCulture) : 0,
                                      // Use function index only from non-data lines (the name line)
-                                     functionOffset = codeAndPrologSizeMatch.Success ?
+                                     functionOffset = codeSizeMatch.Success ?
                                         0 : x.index
                                  };
                              })
@@ -363,14 +362,15 @@ namespace ManagedCodeGen
 
                                  int totalCodeSize = x.Sum(z => z.totalBytes);
                                  int totalAllocSize = x.Sum(z => z.allocSize);
-                                 Debug.Assert(totalCodeSize <= totalAllocSize);
+                                 bool hasCompleteAllocSize = x.Where(z => z.totalBytes != 0).All(z => z.hasAllocSize);
+                                 Debug.Assert(!hasCompleteAllocSize || totalCodeSize <= totalAllocSize);
 
                                  mi.Metrics.Add("CodeSize", totalCodeSize);
                                  mi.Metrics.Add("PrologSize", x.Sum(z => z.prologBytes));
                                  mi.Metrics.Add("PerfScore", x.Sum(z => z.perfScore));
                                  mi.Metrics.Add("InstrCount", x.Sum(z => z.instrCount));
                                  mi.Metrics.Add("AllocSize", totalAllocSize);
-                                 mi.Metrics.Add("ExtraAllocBytes", totalAllocSize - totalCodeSize);
+                                 mi.Metrics.Add("ExtraAllocBytes", hasCompleteAllocSize ? totalAllocSize - totalCodeSize : 0);
                                  mi.Metrics.Add("DebugClauseCount", x.Sum(z => z.debugClauseCount));
                                  mi.Metrics.Add("DebugVarCount", x.Sum(z => z.debugVarCount));
                                  mi.Metrics.Add("SpillCount", x.Sum(z => z.spillCount));
@@ -381,6 +381,33 @@ namespace ManagedCodeGen
                              }).ToList();
 
             return result;
+
+            static IEnumerable<(string line, int index)> ReadMetricLines(string[] filePaths)
+            {
+                const string AssemblyListingPrefix = "; Assembly listing for method ";
+                int lineIndex = 0;
+
+                foreach (string filePath in filePaths)
+                {
+                    string currentMethodName = string.Empty;
+
+                    foreach (string line in File.ReadLines(filePath))
+                    {
+                        if (line.StartsWith(AssemblyListingPrefix, StringComparison.Ordinal))
+                        {
+                            currentMethodName = line.Substring(AssemblyListingPrefix.Length);
+                            yield return (line, lineIndex);
+                        }
+                        else if (line.StartsWith(@"; Total bytes of code", StringComparison.Ordinal) ||
+                                 line.StartsWith(@"; Variable debug info:", StringComparison.Ordinal))
+                        {
+                            yield return (line.Contains("for method", StringComparison.Ordinal) ? line : $"{line} for method {currentMethodName}", lineIndex);
+                        }
+
+                        lineIndex++;
+                    }
+                }
+            }
         }
 
         // Compare base and diff file lists and produce a sorted list of method

@@ -1,0 +1,29 @@
+Found 1 files with textual diffs.
+
+Summary of Code Size diffs:
+(Lower is better)
+
+Total bytes of base: 30
+Total bytes of diff: 30
+Total bytes of delta: 0 (0.00 % of base)
+Total relative delta: 0.10
+    relative diff is a regression.
+
+
+0 total files with Code Size differences (0 improved, 0 regressed), 1 unchanged.
+
+Top method regressions (bytes):
+           2 (20.00% of base) : test4.dasm - Test:ReleaseJitFormat()
+
+Top method improvements (bytes):
+          -2 (-10.00% of base) : test4.dasm - Test:ReleaseJitFormatImprovement()
+
+Top method regressions (percentages):
+           2 (20.00% of base) : test4.dasm - Test:ReleaseJitFormat()
+
+Top method improvements (percentages):
+          -2 (-10.00% of base) : test4.dasm - Test:ReleaseJitFormatImprovement()
+
+2 total methods with Code Size differences (1 improved, 1 regressed), 0 unchanged.
+
+--------------------------------------------------------------------------------

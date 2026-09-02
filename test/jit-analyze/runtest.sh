@@ -40,4 +40,18 @@ if diff ./test3.out ./baseline3.out; then
     echo "Test3: Passed baseline check"
 else
     echo "Test3: Failed baseline check"
-fi        
+fi
+
+jit-analyze --base ./base/test4.dasm --diff ./diff/test4.dasm > test4.out
+RESULT=$?
+if [ $RESULT == 0 ]; then
+    echo "Test4: Passed release JIT format command"
+else
+    echo "Test4: Failed release JIT format command"
+fi
+
+if diff ./test4.out ./baseline4.out; then
+    echo "Test4: Passed release JIT format baseline check"
+else
+    echo "Test4: Failed release JIT format baseline check"
+fi
